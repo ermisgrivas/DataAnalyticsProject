@@ -123,12 +123,42 @@ def find_outliers_iqr(data, feats=None, factor=1.5):
 
     # Find rows where any value is an outlier
     outliers_mask = (data_subset < lower_bound) | (data_subset > upper_bound)
-    outlier_rows = data_subset[outliers_mask.any(axis=1)].index
+    outliers_rows = data_subset[outliers_mask.any(axis=1)].index
 
-    return outlier_rows
+    return outliers_rows, outliers_mask
 
-outliers_iqr = find_outliers_iqr(data_copy)
-print(f"Outliers detected by IQR: ", len(outliers_iqr))
+outlier_rows, outlier_mask = find_outliers_iqr(data_copy)
+
+# Looking for strong outlier rows (rows with 5+ outliers)
+data_copy["Outlier_Count"] = outlier_mask.sum(axis=1)
+strong_outliers = data_copy[data_copy["Outlier_Count"] > 5]
+
+"""
+Worth noting at this point that after testing 18 strong outlier rows were detected.
+A small enough number to where we will conduct a manual inspection to determine which
+should be removed.
+"""
+
+# Show outlier columns to help manual inspection
+outlier_columns = []
+for idx in strong_outliers.index:
+    cols = outlier_mask.columns[outlier_mask.loc[idx]]
+    outlier_columns.append(", ".join(cols))
+
+strong_outliers["Outlier_Columns"] = outlier_columns
+
+# Exporting strong outlier rows to csv to proceed with manual inspection
+strong_outliers.to_csv("outliers.csv", index= False)
+
+"""
+After manual inspection we have determined the following rows to be removed:
+(1) ID = 1299. Amazing home according to most metrics (10 overall quality, huge living area)
+    but sold very cheaply.
+(2) ID = 524. For similar reasons
+(3) ID = 636. 8 bedroom, 14 room apartment
+"""
+
+data_copy = data_copy.drop([1299, 524, 636])
 
 # 4 example box plots to demonstrate outliers
 fig, axes = plt.subplots(2, 2, figsize=(15, 12))
@@ -139,46 +169,6 @@ for feat, axis in zip(
 ):
     sns.boxplot(data=data_copy, y=feat, ax=axis)
     axis.set_title(f"Boxplot of {feat}")
-
-plt.tight_layout()
-plt.show()
-
-# Z score method outlier detection
-def find_outliers_zscore(data, threshold=3):
-    z_scores = np.abs((data - data.mean()) / data.std())
-    return z_scores > threshold
-
-# Apply to target variable
-threshold = 2.5
-outliers_z = find_outliers_zscore(data_copy["SalePrice"], threshold=threshold)
-print(f"Outliers detected by Z-score: {outliers_z.sum()} ({outliers_z.mean()*100:.1f}%)")
-
-# Visualize
-fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-axes[0].scatter(
-    data_copy.index, data_copy["SalePrice"], c=~outliers_z, cmap="RdYlGn", s=10
-)
-axes[0].set_title("Outlier Detection: Z-Score Method")
-axes[0].set_xlabel("Index")
-axes[0].set_ylabel("House Price")
-
-# Show distribution
-axes[1].hist(data_copy["SalePrice"], bins=50, alpha=0.7, color="skyblue")
-axes[1].axvline(
-    data_copy["SalePrice"].mean() + threshold * data_copy["SalePrice"].std(),
-    color="red",
-    linestyle="--",
-    label=f"{threshold}σ",
-)
-axes[1].axvline(
-    data_copy["SalePrice"].mean() - threshold * data_copy["SalePrice"].std(),
-    color="red",
-    linestyle="--",
-)
-axes[1].set_title("Distribution with ±3σ Bounds")
-axes[1].set_xlabel("House Price")
-axes[1].set_ylabel("Frequency")
-axes[1].legend()
 
 plt.tight_layout()
 plt.show()

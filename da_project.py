@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 # Load dataset
 test = pd.read_csv('test.csv')
-data = pd.read_csv('train.csv')
+train = pd.read_csv('train.csv')
 
 # Missing values plot function (to avoid repeat code)
 def missing_values(dataframe):
@@ -38,7 +38,7 @@ def missing_values(dataframe):
     plt.tight_layout()
     plt.show()
 
-missing_values(data)  # Initial missing values before imputation
+missing_values(train)  # Initial missing values before imputation
 
 """
 The following missing data was noticed:
@@ -58,29 +58,30 @@ LotFrontage (1201)
 
 # Class-based Imputation for columns with a low number of missing values
 
-data_copy = data.copy()
-data_copy["class"] = pd.cut(
-    data_copy["MSSubClass"],
+data = train.copy()
+data["class"] = pd.cut(
+    data["MSSubClass"],
     bins=[0, 20, 30, 40, 45, 50, 60, 70, 75, 80, 85, 90, 120, 160, 180, 190],
-    labels=["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8","C9", "C10", "C11", "C12", "C13", "C14", "C15"],
+    labels=[1, 2, 3, 4, 5, 6, 7, 8,9, 10, 11, 12, 13, 14, 15],
 )
 
-numeric_cols = ["MasVnrArea", "LotFrontage"]
-string_cols = ["GarageCond", "GarageQual", "GarageFinish", "GarageYrBlt", "GarageType",
-        "BsmtFinType1", "BsmtFinType2", "BsmtCond", "BsmtQual", "BsmtExposure", "Electrical"]
+data = data.drop("MSSubClass", axis=1) # Since classes have been binned
 
 # Median imputation for numeric columns
-for col in numeric_cols:
-    group_medians = data_copy.groupby("class", observed=True)[col].transform("median")
-    data_copy[col] = data_copy[col].fillna(group_medians)
+cols = ["MasVnrArea", "LotFrontage"]
+for col in cols:
+    group_medians = data.groupby("class", observed=True)[col].transform("median")
+    data[col] = data[col].fillna(group_medians)
 
 # Mode imputation for string columns
-for col in string_cols:
+cols = ["GarageCond", "GarageQual", "GarageFinish", "GarageYrBlt", "GarageType",
+        "BsmtFinType1", "BsmtFinType2", "BsmtCond", "BsmtQual", "BsmtExposure", "Electrical"]
+for col in cols:
     group_modes = (
-        data_copy.groupby("class", observed=True)[col]
+        data.groupby("class", observed=True)[col]
         .transform(lambda x: x.mode().iloc[0] if not x.mode().empty else None)
     )
-    data_copy[col] = data_copy[col].fillna(group_modes)
+    data[col] = data[col].fillna(group_modes)
 
 """
 For the six remaining columns of missing data, these observations were made:
@@ -95,10 +96,9 @@ an alley etc), so they should be left with "None"
 # Adding the rest of the missing values (filled with "None")
 cols = ["FireplaceQu", "Alley", "PoolQC", "MiscFeature", "Fence", "MasVnrType"]
 for col in cols:
-    data_copy[col] = data_copy[col].fillna("None")
+    data[col] = data[col].fillna("None")
 
-missing_values(data_copy) # New plot to show the values have been filled
-
+missing_values(data) # New plot to show the values have been filled
 
 # IQR Outlier Detection for numeric columns
 def find_outliers_iqr(data, feats=None, factor=1.5):
@@ -127,11 +127,11 @@ def find_outliers_iqr(data, feats=None, factor=1.5):
 
     return outliers_rows, outliers_mask
 
-outlier_rows, outlier_mask = find_outliers_iqr(data_copy)
+outlier_rows, outlier_mask = find_outliers_iqr(data)
 
 # Looking for strong outlier rows (rows with 5+ outliers)
-data_copy["Outlier_Count"] = outlier_mask.sum(axis=1)
-strong_outliers = data_copy[data_copy["Outlier_Count"] > 5]
+data["Outlier_Count"] = outlier_mask.sum(axis=1)
+strong_outliers = data[data["Outlier_Count"] > 5]
 
 """
 Worth noting at this point that after testing 18 strong outlier rows were detected.
@@ -147,8 +147,12 @@ for idx in strong_outliers.index:
 
 strong_outliers["Outlier_Columns"] = outlier_columns
 
-# Exporting strong outlier rows to csv to proceed with manual inspection
+"""
+Exporting strong outlier rows to csv to proceed with manual inspection (will be commented as
+outliers.csv isn't part of the project and was only used for initial help
+
 strong_outliers.to_csv("outliers.csv", index= False)
+"""
 
 # 4 example box plots to demonstrate outliers
 fig, axes = plt.subplots(2, 2, figsize=(15, 12))
@@ -157,7 +161,7 @@ for feat, axis in zip(
     axes.flatten(),
     strict=True,
 ):
-    sns.boxplot(data=data_copy, y=feat, ax=axis)
+    sns.boxplot(data=data, y=feat, ax=axis)
     axis.set_title(f"Boxplot of {feat}")
 
 plt.tight_layout()
@@ -171,9 +175,10 @@ After manual inspection we have determined the following rows to be removed:
 (3) ID = 636. 8 bedroom, 14 room apartment
 """
 
-data_copy = data_copy.drop([1299, 524, 636])
+data = data.drop([1299, 524, 636])
+data = data.drop(["Outlier_Count"], axis=1) # No longer needed
 
-data_copy.corr(method="pearson", numeric_only=True)
+data.corr(method="pearson", numeric_only=True)
 # Calculate the correlation matrix
 corr = data.corr(method="pearson", numeric_only=True).round(2)
 
@@ -221,9 +226,46 @@ Leading us to the following steps:
 (2) Removed features: 3ssn porch, miscval, mosold, ID
 """
 
-data_copy["GarageAreaPerCar"] = data_copy["GarageArea"] / data_copy["GarageCars"].replace(0, np.nan)
-data_copy["GarageAreaPerCar"] = data_copy["GarageAreaPerCar"].fillna(0)
-data_copy = data_copy.drop("ID", axis=1)
-data_copy = data_copy.drop("3SsnPorch", axis=1)
-data_copy = data_copy.drop("MiscVal", axis=1)
-data_copy = data_copy.drop("MoSold", axis=1)
+data["GarageAreaPerCar"] = data["GarageArea"] / data["GarageCars"].replace(0, np.nan)
+data["GarageAreaPerCar"] = data["GarageAreaPerCar"].fillna(0)
+data = data.drop("Id", axis=1)
+data = data.drop("3SsnPorch", axis=1)
+data = data.drop("MiscVal", axis=1)
+data = data.drop("MiscFeature", axis=1) # Since MiscFeature was imputed based on MiscVal earlier
+data = data.drop("MoSold", axis=1)
+data = data.drop("Utilities", axis=1) # Upon observing it has the same result 1459/1460 times
+
+# Encoding. Once finished, move above correlation matrix code
+
+"""
+Observing each categorical feature's number of unique values to determine type of encoding.
+This section of code is only used for initial help and will be moved around the project as features
+continue to get encoded.
+
+cat_cols = data_copy.select_dtypes(include=["object"]).columns
+for col in cat_cols:
+    print(f"{col}: {data_copy[col].nunique()} unique values")
+"""
+# Street and Central Air only have 2 unique values so will be one-hot encoded.
+# Same with Alley but None is also included, but will be dropped
+
+# Ordering the categories so that "None" gets dropped
+data["Alley"] = pd.Categorical(
+    data["Alley"],
+    categories=["None", "Grvl", "Pave"]
+)
+
+cols = ["Street", "CentralAir", "Alley"]
+for col in cols:
+    one_hot = pd.get_dummies(data[col], dtype=int, drop_first=True, prefix=col)
+    data = data.drop(col, axis=1)
+    data = data.join(one_hot)
+
+# All Quality/Condition related features will be nominally encoded.
+# All other features will be one-hot encoded
+
+cat_cols = data.select_dtypes(include=["object"]).columns
+for col in cat_cols:
+    print(f"{col}: {data[col].nunique()} unique values")
+
+data.to_csv("data.csv", index = False) # See final results of dataset after preprocessing

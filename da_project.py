@@ -59,7 +59,7 @@ LotFrontage (1201)
 # Class-based Imputation for columns with a low number of missing values
 
 data = train.copy()
-data["class"] = pd.cut(
+data["Class"] = pd.cut(
     data["MSSubClass"],
     bins=[0, 20, 30, 40, 45, 50, 60, 70, 75, 80, 85, 90, 120, 160, 180, 190],
     labels=[1, 2, 3, 4, 5, 6, 7, 8,9, 10, 11, 12, 13, 14, 15],
@@ -70,7 +70,7 @@ data = data.drop("MSSubClass", axis=1) # Since classes have been binned
 # Median imputation for numeric columns
 cols = ["MasVnrArea", "LotFrontage"]
 for col in cols:
-    group_medians = data.groupby("class", observed=True)[col].transform("median")
+    group_medians = data.groupby("Class", observed=True)[col].transform("median")
     data[col] = data[col].fillna(group_medians)
 
 # Mode imputation for string columns
@@ -78,7 +78,7 @@ cols = ["GarageCond", "GarageQual", "GarageFinish", "GarageYrBlt", "GarageType",
         "BsmtFinType1", "BsmtFinType2", "BsmtCond", "BsmtQual", "BsmtExposure", "Electrical"]
 for col in cols:
     group_modes = (
-        data.groupby("class", observed=True)[col]
+        data.groupby("Class", observed=True)[col]
         .transform(lambda x: x.mode().iloc[0] if not x.mode().empty else None)
     )
     data[col] = data[col].fillna(group_modes)
@@ -235,37 +235,96 @@ data = data.drop("MiscFeature", axis=1) # Since MiscFeature was imputed based on
 data = data.drop("MoSold", axis=1)
 data = data.drop("Utilities", axis=1) # Upon observing it has the same result 1459/1460 times
 
-# Encoding. Once finished, move above correlation matrix code
-
 """
-Observing each categorical feature's number of unique values to determine type of encoding.
-This section of code is only used for initial help and will be moved around the project as features
-continue to get encoded.
-
-cat_cols = data_copy.select_dtypes(include=["object"]).columns
-for col in cat_cols:
-    print(f"{col}: {data_copy[col].nunique()} unique values")
+Start of encoding
 """
-# Street and Central Air only have 2 unique values so will be one-hot encoded.
-# Same with Alley but None is also included, but will be dropped
+
+# All Quality/Condition related features will be ordinally encoded.
+# All other features will be one-hot encoded
 
 # Ordering the categories so that "None" gets dropped
+data["MasVnrType"] = pd.Categorical(
+    data["MasVnrType"],
+    categories=["None", "BrkFace", "Stone", "BrkCmn"]
+)
+
 data["Alley"] = pd.Categorical(
     data["Alley"],
     categories=["None", "Grvl", "Pave"]
 )
 
-cols = ["Street", "CentralAir", "Alley"]
+data["Fence"] = pd.Categorical(
+    data["Fence"],
+    categories=["None", "GdPrv", "GdWo", "MnPrv", "MnWw"]
+)
+
+# One-hot encoding
+cols = ["Street", "CentralAir", "Alley", "MSZoning", "LotShape", "LandContour", "LotConfig",
+        "LandSlope", "Neighborhood", "Condition1", "Condition2", "BldgType", "HouseStyle",
+        "RoofStyle", "RoofMatl", "Exterior1st", "Exterior2nd", "MasVnrType", "Foundation",
+        "Heating", "Electrical", "Functional", "GarageType", "Fence", "SaleType", "SaleCondition"]
 for col in cols:
     one_hot = pd.get_dummies(data[col], dtype=int, drop_first=True, prefix=col)
     data = data.drop(col, axis=1)
     data = data.join(one_hot)
 
-# All Quality/Condition related features will be nominally encoded.
-# All other features will be one-hot encoded
+# Ordinal encoding for quality/condition based features
+ordinal_quality_map = {
+    "None": 0,
+    "Po": 1,
+    "Fa": 2,
+    "TA": 3,
+    "Gd": 4,
+    "Ex": 5
+}
 
-cat_cols = data.select_dtypes(include=["object"]).columns
-for col in cat_cols:
-    print(f"{col}: {data[col].nunique()} unique values")
+bsmt_fin_map = {
+    "Unf": 1,
+    "LwQ": 2,
+    "Rec": 3,
+    "BLQ": 4,
+    "ALQ": 5,
+    "GLQ": 6
+}
+
+paved_drive_map = {
+    "N": 1,
+    "P": 2,
+    "Y": 3
+}
+
+garage_finish_map = {
+    "Unf": 1,
+    "RFn": 2,
+    "Fin": 3
+}
+
+bsmt_exposure_map = {
+    "No": 1,
+    "Mn": 2,
+    "Av": 3,
+    "Gd": 4
+}
+
+cols = ["ExterQual", "ExterCond", "BsmtQual", "BsmtCond", "HeatingQC", "KitchenQual",
+        "FireplaceQu", "GarageQual", "GarageCond", "PoolQC"]
+for col in cols:
+    data[col] = data[col].map(ordinal_quality_map).astype("Int64")
+
+cols = ["BsmtFinType1", "BsmtFinType2"]
+for col in cols:
+    data[col] = data[col].map(bsmt_fin_map).astype("Int64")
+
+data["BsmtExposure"] = data["BsmtExposure"].map(bsmt_exposure_map).astype("Int64")
+data["GarageFinish"] = data["GarageFinish"].map(garage_finish_map).astype("Int64")
+data["PavedDrive"] = data["PavedDrive"].map(paved_drive_map).astype("Int64")
+
+"""
+End of encoding
+"""
 
 data.to_csv("data.csv", index = False) # See final results of dataset after preprocessing
+
+"""
+End of preprocessing
+"""

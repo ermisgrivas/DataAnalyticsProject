@@ -8,6 +8,12 @@ import seaborn as sns
 import sklearn
 import geopandas as gpd
 from matplotlib import pyplot as plt
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import SelectKBest, mutual_info_regression
+from sklearn.metrics import silhouette_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 
 # Load dataset
 test = pd.read_csv('test.csv')
@@ -326,5 +332,131 @@ End of encoding
 data.to_csv("data.csv", index = False) # See final results of dataset after preprocessing
 
 """
-End of preprocessing
+End of preprocessing. Start of clustering
+"""
+
+# Select K-Best features
+X = data.drop("SalePrice", axis=1)
+y = data["SalePrice"] # Target variable
+
+skb = SelectKBest(mutual_info_regression, k="all").fit(X, y)
+
+kbest = (
+    pd.DataFrame(
+        {
+            "feature": X.columns,
+            "score": skb.scores_,
+        }
+    )
+    .sort_values("score", ascending=False)
+    .reset_index(drop=True)
+)
+
+"""
+Temporarily export to csv to view all features' importance
+"""
+kbest.to_csv("kbest.csv", index = False)
+
+# Test-train split on new dataset
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Choosing important descriptive features for clustering
+cols = ["OverallQual", "YearBuilt", "TotalBsmtSF", "GrLivArea", "TotRmsAbvGrd", "GarageArea",
+        "GarageCars", "KitchenQual", "GarageQual", "LotArea",
+        "Fireplaces", "FullBath", "PoolArea", "BsmtExposure"]
+
+X_cluster = data[cols]
+
+# Scaling
+scaler = StandardScaler()
+X_cluster_scaled = scaler.fit_transform(X_cluster)
+
+# Find optimal k by silhouette score method
+silhouette_scores = []
+K = range(2, 20)
+
+for k in K:
+    # Initialise kmeans
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    kmeans.fit(X_train_scaled)
+
+    # Silhouette score
+    silhouette_scores.append(silhouette_score(X_train_scaled, kmeans.labels_))
+
+# Find the optimal K based on the maximum silhouette score
+optimal_k = K[np.argmax(silhouette_scores)]
+
+# Plot
+plt.figure(figsize=(8, 6))
+plt.plot(K, silhouette_scores, "bx-", label="Silhouette Score", markersize=8)
+plt.axvline(
+    x=optimal_k,
+    color="red",
+    linestyle="--",
+    linewidth=2,
+    label=f"Optimal K = {optimal_k}",
+)
+plt.scatter(
+    optimal_k,
+    silhouette_scores[np.argmax(silhouette_scores)],
+    color="red",
+    s=100,
+    zorder=5,
+)
+
+plt.title("Silhouette Analysis For Optimal K", fontsize=16, fontweight="bold")
+plt.xlabel("Number of Clusters (K)", fontsize=12)
+plt.ylabel("Silhouette Score", fontsize=12)
+plt.xticks(K)
+plt.grid(True, linestyle="--", alpha=0.6)
+plt.legend(loc="best")
+plt.tight_layout()
+plt.show()
+
+"""
+The silhouette score plot clearly shows that 2 clusters is the optimal route. The score rapidly 
+descends as k increases.
+"""
+
+pca2d = PCA(n_components=2)
+X_train_scaled_2d = pca2d.fit_transform(X_train_scaled)
+X_test_scaled_2d = pca2d.transform(X_test_scaled)
+
+# Running K-Means
+kmeans = KMeans(n_clusters=2, random_state=42)
+kmeans.fit(X=X_test_scaled)
+
+_, ax = plt.subplots(1, 1, figsize=(6, 6))
+
+sns.scatterplot(
+    x=X_test_scaled_2d[:, 0],
+    y=X_test_scaled_2d[:, 1],
+    hue=kmeans.predict(X_test_scaled),
+    palette="Set1",
+    ax=ax,
+    s=40,
+    edgecolor="k",
+)
+
+ax.set_title("Cluster Assignments", fontsize=14, fontweight="bold")
+ax.set_xlabel("Component 1")
+ax.set_ylabel("Component 2")
+sns.despine(ax=ax)
+plt.legend(title="Cluster", loc="upper right", bbox_to_anchor=(1.15, 1))
+plt.tight_layout()
+plt.show()
+
+# Summarize clusters to make observations about the data
+test_data = data.loc[X_test.index].copy()
+test_data["Cluster"]=kmeans.labels_
+cluster_summary = test_data.groupby("Cluster")[cols + ["SalePrice"]].mean()
+cluster_summary.to_csv("Kcluster_summary.csv")
+
+"""
+Upon observation of the csv file, K-Means separates the data into 2 distinct clusters, 
+based on the quality and size of each house. The outcome is obviously that 
+bigger & higher quality homes end up more expensive.
 """

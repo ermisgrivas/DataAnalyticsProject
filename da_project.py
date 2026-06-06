@@ -8,12 +8,15 @@ import seaborn as sns
 import sklearn
 import geopandas as gpd
 from matplotlib import pyplot as plt
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, mutual_info_regression
 from sklearn.metrics import silhouette_score
 from sklearn.model_selection import train_test_split
+from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from kneed import KneeLocator
+
 
 # Load dataset
 test = pd.read_csv('test.csv')
@@ -181,10 +184,9 @@ After manual inspection we have determined the following rows to be removed:
 (3) ID = 636. 8 bedroom, 14 room apartment
 """
 
-data = data.drop([1299, 524, 636])
+data = data.drop([1298, 523, 635]) # Since index = 0 for ID = 1
 data = data.drop(["Outlier_Count"], axis=1) # No longer needed
 
-data.corr(method="pearson", numeric_only=True)
 # Calculate the correlation matrix
 corr = data.corr(method="pearson", numeric_only=True).round(2)
 
@@ -335,34 +337,6 @@ data.to_csv("data.csv", index = False) # See final results of dataset after prep
 End of preprocessing. Start of clustering
 """
 
-# Select K-Best features
-X = data.drop("SalePrice", axis=1)
-y = data["SalePrice"] # Target variable
-
-skb = SelectKBest(mutual_info_regression, k="all").fit(X, y)
-
-kbest = (
-    pd.DataFrame(
-        {
-            "feature": X.columns,
-            "score": skb.scores_,
-        }
-    )
-    .sort_values("score", ascending=False)
-    .reset_index(drop=True)
-)
-
-"""
-Temporarily export to csv to view all features' importance
-"""
-kbest.to_csv("kbest.csv", index = False)
-
-# Test-train split on new dataset
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
-
 # Choosing important descriptive features for clustering
 cols = ["OverallQual", "YearBuilt", "TotalBsmtSF", "GrLivArea", "TotRmsAbvGrd", "GarageArea",
         "GarageCars", "KitchenQual", "GarageQual", "LotArea",
@@ -381,10 +355,10 @@ K = range(2, 20)
 for k in K:
     # Initialise kmeans
     kmeans = KMeans(n_clusters=k, random_state=42)
-    kmeans.fit(X_train_scaled)
+    kmeans.fit(X_cluster_scaled)
 
     # Silhouette score
-    silhouette_scores.append(silhouette_score(X_train_scaled, kmeans.labels_))
+    silhouette_scores.append(silhouette_score(X_cluster_scaled, kmeans.labels_))
 
 # Find the optimal K based on the maximum silhouette score
 optimal_k = K[np.argmax(silhouette_scores)]
@@ -417,24 +391,23 @@ plt.tight_layout()
 plt.show()
 
 """
-The silhouette score plot clearly shows that 2 clusters is the optimal route. The score rapidly 
+The silhouette score plot shows that 3 clusters is the optimal route. The score afterwards rapidly 
 descends as k increases.
 """
 
 pca2d = PCA(n_components=2)
-X_train_scaled_2d = pca2d.fit_transform(X_train_scaled)
-X_test_scaled_2d = pca2d.transform(X_test_scaled)
+X_cluster_scaled_2d = pca2d.fit_transform(X_cluster_scaled)
 
 # Running K-Means
-kmeans = KMeans(n_clusters=2, random_state=42)
-kmeans.fit(X=X_test_scaled)
+kmeans = KMeans(n_clusters=3, random_state=42)
+kmeans.fit(X=X_cluster_scaled)
 
 _, ax = plt.subplots(1, 1, figsize=(6, 6))
 
 sns.scatterplot(
-    x=X_test_scaled_2d[:, 0],
-    y=X_test_scaled_2d[:, 1],
-    hue=kmeans.predict(X_test_scaled),
+    x=X_cluster_scaled_2d[:, 0],
+    y=X_cluster_scaled_2d[:, 1],
+    hue=kmeans.predict(X_cluster_scaled),
     palette="Set1",
     ax=ax,
     s=40,
@@ -449,14 +422,99 @@ plt.legend(title="Cluster", loc="upper right", bbox_to_anchor=(1.15, 1))
 plt.tight_layout()
 plt.show()
 
-# Summarize clusters to make observations about the data
-test_data = data.loc[X_test.index].copy()
-test_data["Cluster"]=kmeans.labels_
-cluster_summary = test_data.groupby("Cluster")[cols + ["SalePrice"]].mean()
-cluster_summary.to_csv("Kcluster_summary.csv")
-
 """
-Upon observation of the csv file, K-Means separates the data into 2 distinct clusters, 
+Upon observation of the plot, K-Means separates the data into 3 clusters, 
 based on the quality and size of each house. The outcome is obviously that 
 bigger & higher quality homes end up more expensive.
 """
+
+# Clustering via DBSCAN
+
+
+# Fit NearestNeighbors model and calculate distances
+nearest_neighbors = NearestNeighbors(n_neighbors=11)
+neighbors = nearest_neighbors.fit(X_cluster_scaled)
+
+distances, indices = neighbors.kneighbors(X_cluster_scaled)
+distances = np.sort(distances[:, 10], axis=0)
+
+# Find the knee point (approximate where the slope increases sharply)
+knee_point = np.argmax(np.diff(distances)) + 1  # Add 1 because diff reduces length by 1
+
+# Plot
+fig = plt.figure(figsize=(7, 5))
+plt.plot(distances, color="b", label="Distance to 11th nearest neighbor", linewidth=2)
+plt.scatter(
+    knee_point,
+    distances[knee_point],
+    color="red",
+    s=80,
+    label=f"Knee point = {knee_point}",
+    zorder=5,
+)
+plt.axvline(knee_point, color="red", linestyle="--", linewidth=1.5)
+
+plt.title("k-NN Distance Plot (for DBSCAN)", fontsize=14, fontweight="bold")
+plt.xlabel("Sample Index (sorted)", fontsize=12)
+plt.ylabel("Distance to 11th Nearest Neighbor", fontsize=12)
+plt.grid(True, linestyle="--", alpha=0.6)
+plt.legend(loc="best")
+plt.tight_layout()
+plt.show()
+
+# Locate eps
+i = np.arange(len(distances))
+knee = KneeLocator(
+    i,
+    distances,
+    S=1,
+    curve="convex",
+    direction="increasing",
+    interp_method="polynomial",
+)
+
+knee.plot_knee()
+plt.xlabel("Points")
+plt.ylabel("Distance")
+plt.axhline(y=distances[knee.knee], color="red", linestyle="--", linewidth=1.5)
+plt.show()
+
+# Apply DBSCAN
+dbscan = DBSCAN(eps=distances[knee.knee], n_jobs=-1)
+dbscan.fit(X_cluster_scaled)
+
+fig, ax = plt.subplots(1, 1, figsize=(7, 7), layout="constrained")
+
+sns.scatterplot(
+    x=X_cluster_scaled_2d[:, 0],
+    y=X_cluster_scaled_2d[:, 1],
+    hue=dbscan.labels_,
+    palette="Set1",
+    ax=ax,
+    legend="full",
+    s=50,
+)
+ax.set_title("DBSCAN Clustering", fontsize=14, fontweight="bold")
+sns.despine()
+plt.show()
+
+"""
+Observation: DBScan also produced 3 clusters. 
+Blue (cluster 0) is the dominant cluster. The other 2 clusters (1,2) indicate small subgroups while
+-1 indicates noise/outliers.
+"""
+
+# Identify clusters
+fig, ax = plt.subplots(4, 5, figsize=(10, 10), sharex=True, sharey=True)
+ax_flat = ax.flatten()
+
+for i, cluster_id in enumerate(set(dbscan.labels_)):
+    mask = dbscan.labels_ == cluster_id
+    ax_flat[i].scatter(
+        X_cluster_scaled_2d[mask, 0],
+        X_cluster_scaled_2d[mask, 1],
+        color=plt.cm.tab20(cluster_id) if cluster_id != -1 else "white",
+    )
+    ax_flat[i].set_title(f"Cluster ID: {cluster_id}")
+
+plt.show()

@@ -10,13 +10,14 @@ import geopandas as gpd
 from matplotlib import pyplot as plt
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.decomposition import PCA
-from sklearn.feature_selection import SelectKBest, mutual_info_regression
-from sklearn.metrics import silhouette_score
+from sklearn.feature_selection import SelectKBest, mutual_info_regression, mutual_info_classif
+from sklearn.metrics import silhouette_score, accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from kneed import KneeLocator
-
+from sklearn.svm import SVC
 
 # Load dataset
 test = pd.read_csv('test.csv')
@@ -268,7 +269,7 @@ data["Fence"] = pd.Categorical(
 
 # One-hot encoding
 cols = ["Street", "CentralAir", "Alley", "MSZoning", "LotShape", "LandContour", "LotConfig",
-        "LandSlope", "Neighborhood", "Condition1", "Condition2", "BldgType", "HouseStyle",
+        "LandSlope", "Neighborhood", "Condition1", "Condition2", "BldgType",
         "RoofStyle", "RoofMatl", "Exterior1st", "Exterior2nd", "MasVnrType", "Foundation",
         "Heating", "Electrical", "Functional", "GarageType", "Fence", "SaleType", "SaleCondition"]
 for col in cols:
@@ -327,6 +328,14 @@ data["BsmtExposure"] = data["BsmtExposure"].map(bsmt_exposure_map).astype("Int64
 data["GarageFinish"] = data["GarageFinish"].map(garage_finish_map).astype("Int64")
 data["PavedDrive"] = data["PavedDrive"].map(paved_drive_map).astype("Int64")
 
+classification_data = data.copy() # Before HouseStyle gets one-hot encoded
+
+# Future target variable so will be one-hot encoded separately
+one_hot = pd.get_dummies(data["HouseStyle"], dtype=int, drop_first=True, prefix="HouseStyle")
+data = data.drop("HouseStyle", axis=1)
+data = data.join(one_hot)
+
+
 """
 End of encoding
 """
@@ -337,7 +346,7 @@ data.to_csv("data.csv", index = False) # See final results of dataset after prep
 End of preprocessing. Start of clustering
 """
 
-# Choosing important descriptive features for clustering
+# Choosing natural & structural features for clustering & classification
 cols = ["OverallQual", "YearBuilt", "TotalBsmtSF", "GrLivArea", "TotRmsAbvGrd", "GarageArea",
         "GarageCars", "KitchenQual", "GarageQual", "LotArea",
         "Fireplaces", "FullBath", "PoolArea", "BsmtExposure"]
@@ -518,3 +527,108 @@ for i, cluster_id in enumerate(set(dbscan.labels_)):
     ax_flat[i].set_title(f"Cluster ID: {cluster_id}")
 
 plt.show()
+
+
+"""
+End of clustering. Beginning of classification
+"""
+
+# Inspection of the target variable's distribution
+plt.figure(figsize=(8, 5))
+
+sns.countplot(
+    data=classification_data,
+    x="HouseStyle",
+    order=classification_data["HouseStyle"].value_counts().index
+)
+
+plt.title("Distribution of HouseStyle")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# Training a Bayesian classifier based on the earlier-selected features
+X = classification_data[cols]
+y = classification_data["HouseStyle"] # Target variable
+
+# Test-train split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# Train Bayes classifier
+nb = GaussianNB()
+nb.fit(X_train, y_train)
+
+# Predict
+y_pred_nb = nb.predict(X_test)
+
+# Evaluate
+print("NB Accuracy:", accuracy_score(y_test, y_pred_nb))
+
+print(classification_report(y_test, y_pred_nb))
+
+"""
+NB is not a strong classifier by any metric, as we're seeing low accuracy and F1-scores across the board.
+It is surprisingly good at predicting the least dominant classes of the dataset, but the model does a 
+poor job at reflecting 1Story and 2Story's level of dominance.
+"""
+
+# Training an SVM classifier (scaled data is required here)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+svm = SVC(
+    kernel="rbf",
+    C=1.0,
+    gamma="scale",
+    class_weight="balanced",
+    random_state=42
+)
+
+svm.fit(X_train_scaled, y_train)
+
+y_pred_svm = svm.predict(X_test_scaled)
+
+print("SVM Accuracy:", accuracy_score(y_test, y_pred_svm))
+print(classification_report(y_test, y_pred_svm))
+
+"""
+SVM accuracy is dramatically improved (nearly 30% compared to NB), as are the F1-scores.
+"""
+
+# Confusion matrices
+cm_nb = confusion_matrix(y_test, y_pred_nb, labels=nb.classes_)
+cm_svm = confusion_matrix(y_test, y_pred_svm, labels=svm.classes_)
+
+fig, ax = plt.subplots(1, 2, figsize=(14, 5))
+
+sns.heatmap(
+    cm_nb,
+    annot=True,
+    fmt="d",
+    ax=ax[0],
+    xticklabels=nb.classes_,
+    yticklabels=nb.classes_
+)
+
+ax[0].set_title("Naive Bayes")
+
+sns.heatmap(
+    cm_svm,
+    annot=True,
+    fmt="d",
+    ax=ax[1],
+    xticklabels=svm.classes_,
+    yticklabels=svm.classes_
+)
+
+ax[1].set_title("SVM")
+
+plt.tight_layout()
+plt.show()
+
+"""
+From the Confusion Matrix comparison, it's evident that SVM much more accurately predicts the 
+two dominant classes (1Story and 2Story). Since those account for nearly 80% of the test dataset,
+it leads to an overall higher accuracy and makes it the stronger model overall.
+"""
